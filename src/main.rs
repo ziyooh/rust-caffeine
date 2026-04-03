@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use std::error::Error;
+use std::sync::mpsc;
 use image::ImageFormat;
 use tray_icon::{TrayIconBuilder, Icon, TrayIconEvent, MouseButton};
 use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent};
@@ -23,17 +24,28 @@ fn load_icon(data: &[u8]) -> Result<Icon, Box<dyn Error>> {
     Ok(Icon::from_rgba(icon_rgba, icon_width, icon_height)?)
 }
 
-// 2. 윈도우 API 호출로 절전 모드 방지 제어
-fn set_caffeine(active: bool) {
-    let state = if active {
-        ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
-    } else {
-        ES_CONTINUOUS
-    };
-    
-    unsafe {
-        SetThreadExecutionState(state);
-    }
+// 2. SetThreadExecutionState 전담 스레드로 절전 모드 방지 제어
+//    SetThreadExecutionState는 호출 스레드 단위로 동작하므로,
+//    반드시 동일 스레드에서 설정/해제해야 정상 작동함.
+fn spawn_execution_state_thread() -> mpsc::Sender<bool> {
+    let (tx, rx) = mpsc::channel::<bool>();
+    thread::spawn(move || {
+        while let Ok(active) = rx.recv() {
+            let state = if active {
+                ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
+            } else {
+                ES_CONTINUOUS
+            };
+            unsafe {
+                SetThreadExecutionState(state);
+            }
+        }
+        // 채널 닫힘 시 절전 허용 상태로 복원
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    });
+    tx
 }
 
 // 3. 커스텀 이벤트
@@ -126,13 +138,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     EVENT_PROXY.set(proxy.clone()).unwrap();
     spawn_session_monitor();
 
+    // SetThreadExecutionState 전담 스레드 시작
+    let exec_state_tx = spawn_execution_state_thread();
+
     let active_icon = load_icon(ACTIVE_ICON_DATA)?;
     let inactive_icon = load_icon(INACTIVE_ICON_DATA)?;
 
     let mut is_active = true;
     let mut is_locked = false;
     
-    set_caffeine(is_active);
+    let _ = exec_state_tx.send(is_active);
 
     let status_menu_item = MenuItem::with_id("status", "현재 상태: 활성화됨", false, None);
     let toggle_menu_item = MenuItem::with_id("toggle", "Caffeine 켜기/끄기", true, None);
@@ -144,7 +159,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     tray_menu.append(&toggle_menu_item)?;
     tray_menu.append(&quit_menu_item)?;
 
-    let mut tray_icon = TrayIconBuilder::new()
+    let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
         .with_menu_on_left_click(false)
         .with_tooltip("Caffeine: 켜짐")
@@ -178,7 +193,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if menu_event.id == toggle_menu_item.id() {
                         toggle_requested = true;
                     } else if menu_event.id == quit_menu_item.id() {
-                        set_caffeine(false);
+                        let _ = exec_state_tx.send(false);
                         *control_flow = ControlFlow::Exit;
                     }
                 }
@@ -196,10 +211,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             is_locked = locked;
             if is_locked {
                 // 잠긴 상태라면 능동적 상태(is_active)와 무관하게 절전 허용 (API 끄기)
-                set_caffeine(false);
+                let _ = exec_state_tx.send(false);
             } else {
                 // 풀린 상태라면 원래 사용자가 세팅해둔 상태(is_active) 복구
-                set_caffeine(is_active);
+                let _ = exec_state_tx.send(is_active);
             }
         }
 
@@ -209,7 +224,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             
             // 만약 현재 잠금 상태가 아니라면 실제로 바로 API 적용
             if !is_locked {
-                set_caffeine(is_active);
+                let _ = exec_state_tx.send(is_active);
             }
             
             if is_active {
@@ -224,3 +239,4 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 }
+
