@@ -19,6 +19,7 @@ fn main() {
     resources.set_icon("assets/active.ico");
 
     if target_env == "gnu" {
+        // GNU 툴체인에서 리소스 오브젝트 직접 링크 경로 사용
         compile_gnu_resource(&resources, &out_dir, &manifest_dir)
             .expect("GNU Windows 리소스 아이콘 포함 실패");
     } else {
@@ -36,6 +37,7 @@ fn compile_gnu_resource(
     let rc_path = out_dir.join("resource.rc");
     let object_path = out_dir.join("resource.o");
 
+    // Cargo가 제공한 OUT_DIR 아래에 임시 rc 파일 생성
     resources.write_resource_file(&rc_path)?;
 
     let status = Command::new("windres")
@@ -53,6 +55,7 @@ fn compile_gnu_resource(
         return Err("windres 리소스 컴파일 실패".into());
     }
 
+    // 최종 exe 링크 단계에 리소스 오브젝트 직접 주입
     println!("cargo:rustc-link-arg-bins={}", object_path.display());
 
     Ok(())

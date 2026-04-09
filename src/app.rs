@@ -55,6 +55,7 @@ impl AppState {
     }
 
     fn effective_active(&self) -> bool {
+        // 사용자 설정과 잠금 상태를 함께 반영한 실제 절전 방지 상태
         self.is_active && !self.is_locked
     }
 
@@ -74,6 +75,7 @@ enum UserAction {
 }
 
 pub fn run() -> AppResult<()> {
+    // 플랫폼 초기화와 UI 구성을 마친 뒤 단일 이벤트 루프로 진입
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -103,6 +105,7 @@ pub fn run() -> AppResult<()> {
 }
 
 fn install_event_handlers(proxy: EventLoopProxy<AppEvent>) {
+    // 외부 라이브러리 콜백을 애플리케이션 사용자 이벤트로 수렴
     let tray_proxy = proxy.clone();
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
         let _ = tray_proxy.send_event(AppEvent::Tray(event));
@@ -120,6 +123,7 @@ fn handle_user_event(
     execution_state: &ExecutionStateController,
     control_flow: &mut ControlFlow,
 ) {
+    // 트레이 입력, 메뉴 입력, 세션 변경을 단일 처리 흐름으로 통합
     let Some(action) = resolve_user_action(app_event, tray_ui) else {
         return;
     };
@@ -130,6 +134,7 @@ fn handle_user_event(
             execution_state.set_active(state.effective_active());
 
             if tray_ui.sync(state).is_err() {
+                // 트레이 상태 동기화 실패 시 절전 방지 해제 후 종료
                 execution_state.set_active(false);
                 *control_flow = ControlFlow::Exit;
             }
@@ -146,6 +151,7 @@ fn handle_user_event(
 }
 
 fn resolve_user_action(app_event: AppEvent, tray_ui: &TrayUi) -> Option<UserAction> {
+    // 플랫폼 이벤트를 내부 액션으로 정규화
     match app_event {
         AppEvent::Tray(tray_event) => {
             if let TrayIconEvent::Click {

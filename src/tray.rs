@@ -4,6 +4,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::app::{AppResult, AppState};
 
+// 실행 파일에 포함된 트레이 아이콘 원본 데이터
 const ACTIVE_ICON_DATA: &[u8] = include_bytes!("../assets/active.ico");
 const INACTIVE_ICON_DATA: &[u8] = include_bytes!("../assets/inactive.ico");
 
@@ -54,6 +55,7 @@ impl TrayUi {
     }
 
     pub fn sync(&self, state: &AppState) -> AppResult<()> {
+        // 상태 변경 시 아이콘, 툴팁, 메뉴 텍스트 동시 갱신
         self.tray_icon.set_icon(Some(
             select_icon(state.is_active(), &self.active_icon, &self.inactive_icon).clone(),
         ))?;
@@ -83,6 +85,7 @@ fn select_icon<'a>(is_active: bool, active_icon: &'a Icon, inactive_icon: &'a Ic
 }
 
 fn load_icon(data: &[u8]) -> AppResult<Icon> {
+    // ico 파일을 tray-icon이 요구하는 RGBA 포맷으로 변환
     let image = image::load_from_memory_with_format(data, ImageFormat::Ico)?.into_rgba8();
     let (width, height) = image.dimensions();
 

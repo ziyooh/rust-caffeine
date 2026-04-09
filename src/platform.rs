@@ -23,6 +23,7 @@ const SESSION_MONITOR_CLASS_NAME: windows::core::PCWSTR = w!("CaffeineSessionMon
 const WTS_SESSION_LOCK: u32 = 0x7;
 const WTS_SESSION_UNLOCK: u32 = 0x8;
 
+// Windows 세션 콜백에서 메인 이벤트 루프로 신호 전달 목적
 static EVENT_PROXY: OnceLock<EventLoopProxy<AppEvent>> = OnceLock::new();
 
 pub struct ExecutionStateController {
@@ -34,10 +35,12 @@ impl ExecutionStateController {
         let (tx, rx) = mpsc::channel::<bool>();
 
         thread::spawn(move || {
+            // SetThreadExecutionState 호출 스레드 고정 목적
             while let Ok(active) = rx.recv() {
                 apply_execution_state(active);
             }
 
+            // 종료 시 기본 전원 정책 복원 목적
             apply_execution_state(false);
         });
 
@@ -61,6 +64,7 @@ pub fn spawn_session_monitor() -> AppResult<()> {
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
     thread::spawn(move || {
+        // 메인 스레드가 초기화 실패를 즉시 감지할 수 있도록 준비 결과 전달
         let setup_result = create_session_monitor();
 
         match setup_result {
@@ -82,6 +86,7 @@ pub fn spawn_session_monitor() -> AppResult<()> {
 }
 
 fn apply_execution_state(active: bool) {
+    // 화면과 시스템 절전 방지를 함께 제어하는 플래그 조합
     let state = if active {
         ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
     } else {
@@ -105,6 +110,7 @@ unsafe extern "system" fn session_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if msg == WM_WTSSESSION_CHANGE {
+        // Win+L 잠금과 잠금 해제를 내부 이벤트로 변환
         let event = match wparam.0 as u32 {
             WTS_SESSION_LOCK => Some(AppEvent::Lock),
             WTS_SESSION_UNLOCK => Some(AppEvent::Unlock),
@@ -136,6 +142,7 @@ fn create_session_monitor() -> AppResult<SessionMonitorContext> {
     }
 
     let hwnd = unsafe {
+        // 화면에 표시되지 않는 메시지 전용 윈도우 생성
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             SESSION_MONITOR_CLASS_NAME,
@@ -161,6 +168,7 @@ fn run_session_monitor(context: SessionMonitorContext) {
     let mut message = MSG::default();
 
     loop {
+        // 세션 변경 메시지 수신 대기와 디스패치 루프
         let message_state = unsafe { GetMessageW(&mut message, None, 0, 0).0 };
 
         if message_state <= 0 {
@@ -173,6 +181,7 @@ fn run_session_monitor(context: SessionMonitorContext) {
     }
 
     unsafe {
+        // 세션 알림 해제와 임시 윈도우 정리
         let _ = WTSUnRegisterSessionNotification(context.hwnd);
         let _ = DestroyWindow(context.hwnd);
         let _ = UnregisterClassW(SESSION_MONITOR_CLASS_NAME, Some(context.hinstance));
